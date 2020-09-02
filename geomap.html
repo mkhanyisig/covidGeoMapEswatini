@@ -1,0 +1,449 @@
+<!-- Code from d3-graph-gallery.com -->
+<!DOCTYPE html>
+<meta charset="utf-8">
+<head>
+<!-- Load d3.js -->
+<!--<script src="https://d3js.org/d3.v4.js"></script>-->
+<script src="https://d3js.org/d3.v4.min.js"></script>
+<script src="https://d3js.org/d3-scale-chromatic.v1.min.js"></script>
+<script src="https://d3js.org/d3-geo-projection.v2.min.js"></script>
+<script src="https://d3js.org/d3-geo.v1.min.js"></script>
+<script src="https://unpkg.com/topojson-client@3"></script>
+<script src="https://unpkg.com/topojson@3"></script>
+
+<script src="https://d3js.org/d3-array.v1.min.js"></script>
+<script src="https://d3js.org/d3-geo.v1.min.js"></script>
+<script src="https://d3js.org/d3-scale-chromatic.v0.3.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3-legend/2.25.6/d3-legend.js"></script>
+
+
+<style>
+  div.hover_label {
+       top: 100px;
+       left: 100px;
+       position: absolute;
+       text-align: left;
+       padding: 10px;
+       margin-top: -10px;
+       opacity: .8;
+       background: #BDC3C7;
+       color: #313639;
+       border: 1px solid #313639;
+       border-radius: 5px;
+       pointer-events: none;
+       font-size: 1.0rem;
+       font-weight: lighter;
+       border-bottom: 1px dotted black;
+       position: relative;
+
+  }
+</style>
+
+
+</head>
+
+<body>
+<h1 id="map__text" style="color:#252B30;"  font-size:20px ><b>Regional Cases Data</b></h3>
+
+<div id="btn-zoom">
+  <i id="btn-zoom--in" class="fa fa-search-plus fa-2x" ></i>
+  <i id="btn-zoom--out"class="fa fa-search-minus fa-2x" ></i>
+</div>
+
+
+<div class="main_div">
+<!-- Create an element where the map will take place -->
+<svg class="map_svg" id="my_dataviz" width="800" height="600">
+    <rect width="100%" height="100%" fill="#ECF0F1" />
+</svg>
+
+</div>
+
+<p font-size:7px>  <b>Click on Region-Parastatal to see cases summary detail and Zoom in </b>  </p>
+
+<script>
+
+const HOVER_COLOR = "#241A17"
+const ZOOM_DURATION = 10;
+const ZOOM_IN_STEP = 2;
+
+
+d3.select("#btn-zoom--in").on("click", () => clickToZoom(ZOOM_IN_STEP));
+d3.select("#btn-zoom--out").on("click", () => clickToZoom(ZOOM_OUT_STEP));
+
+
+// The svg container
+var svg = d3.select("svg"),
+    width = +svg.attr("width"),
+    height = +svg.attr("height");
+
+
+
+svg.attr("viewBox", [0, 0, width, height])
+    .attr("z-index", "-1")
+    .style("fill", "none")
+    .style("pointer-events", "all");
+
+// quality check
+console.log(width,height);
+
+// Map and projection
+var projection = d3.geoMercator()
+    .center([26.5082, -30.3713])                // GPS of location to zoom on
+    .scale(1)                       // This is like the zoom
+    .translate([width/2, height/2]);
+    //.translate([ width/5000, height/0.5 ])  // width denominator-> low(left),
+
+var path = d3.geoPath().projection(projection);
+
+// quality check
+console.log(projection)
+
+var params={"transform":{"w":0,"h":0},"scale":0};
+
+// find the top left and bottom right of current projection
+var maxlat=-24;
+function mercatorBounds(projection, maxlat) {
+    var yaw = projection.rotate()[0],
+        xymax = projection([-yaw+180-1e-6,-maxlat]),
+        xymin = projection([-yaw-180+1e-6, maxlat]);
+
+    return [xymin,xymax];
+}
+
+// color
+var myScale = d3.scaleOrdinal().range(d3.schemeCategory20)
+
+const zoom = d3.zoom()
+.scaleExtent([0.5, 20]) //  minimum and maximum allowed scale factor of original
+    .translateExtent([[0,0], [width*2, height*2]]) // top left corner, top right corner
+    .extent([[0, 0], [width, height]]) //
+    .on("zoom", zoomed);
+
+svg.on("dblclick.zoom", null)
+
+var g = svg.append("g");
+
+// Experiment
+
+// Create the legend
+let d3legend = d3.legendColor()
+            .shapeWidth(width / 10)
+            .cells(5)
+            .orient("horizontal")
+            .labelOffset(3)
+            .ascending(true)
+            .labelAlign("middle")
+            .shapePadding(2);
+
+// background
+/*
+g
+    .append("rect")
+    .attr("width", width)
+    .attr("height", height)
+    .style("fill", "red")
+    .attr(
+      "transform",
+      `translate(-${width},-${height})`
+    )
+    .style("pointer-events", "all");
+*/
+
+
+
+
+
+var hoverLabel = d3.select("body")
+.append("div")
+.attr("class", "hover_label")
+.style("position", "absolute")
+.style("opacity", 0)
+//.style("height", "30px")
+//.style("width", "150px")
+.style("z-index", "10")
+.style("visibility", "hidden")
+.text("Regional data");
+
+// color
+const color = d3.scaleOrdinal(d3.schemeCategory20c.slice(4,8));
+//const color = d3.scaleSequential().interpolator(d3.interpolateOranges);
+var cmap= {"Lubombo": 332,"Manzini":2094,"Hhohho":1808,"Shiselweni":384}
+
+var regionMap={"Lubombo": "#D6764A","Manzini":"#9B5D44","Hhohho":"#4C3A32","Shiselweni":"#252B30"}
+
+
+console.log(color);
+
+// Load external data and boot
+d3.json("https://raw.githubusercontent.com/mkhanyisig/sivivane_data_analysis/master/data/fullMap_SD.json", function(data){
+
+        // fit projection
+        projection.fitExtent([[0, 0], [(width-30), height]], data);
+
+        // legend stuff
+
+        // max and min of data values
+        //var extent=[10,170];
+
+        let extent = d3.extent(data.features, function(d) {console.log(cmap[d.properties.adm1_name]);
+	                return cmap[d.properties.adm1_name];
+	            });
+
+        console.log(extent);
+
+        //let color = d3.scaleSequential().interpolator(d3.interpolateOranges);
+	      color.domain([extent[0], extent[1]]);
+
+        console.log(color);
+
+
+
+        // if legend already exists, remove and create again
+        svg.select('.legend').remove();
+
+        d3legend
+            .labelFormat(d3.format(".1f"))
+            .title("Number of cases")
+            .titleWidth(300)
+            .scale(color);
+
+        // create legend
+        let legend = svg.append("g")
+            .attr("class", "legend")
+            .attr("transform", "translate(" + (width / 28) + "," + (height * 9 / 10) + ")");
+
+        legend
+            .call(d3legend);
+
+
+        // Get the scale and center parameters from the features.
+        var scaleCenter = calculateScaleCenter(data);
+        console.log(scaleCenter);
+
+        // Filter data
+        console.log(data);
+        //data.features = data.features.filter(function(d){ ; return d.properties.Region=="Shiselweni"})
+
+        console.log(data.features);
+
+
+        // topology
+
+        console.log("drawing map");
+
+    // Draw the map
+    g
+        .append("g")
+        .selectAll("path")
+        .data(data.features)
+        .enter()
+        .append("path")
+        .attr("fill", (d, i) => regionMap[d.properties.adm1_name])
+        .attr("d", path)
+        .style("stroke", "#030F18")
+        .attr("stroke-width", 1.3)
+        .call(zoom)
+        .on("mouseover", mouseOverHandler)
+        .on("mouseout", mouseOutHandler)
+        .on("mousemove", movingMouse)
+        .on("click", clickHandler);
+        console.log("gets here")
+    var i;
+    for (i = 0; i < data.features.length; i++) {
+      //text += cars[i] + "<br>";
+    }
+
+
+    // add text
+    /*
+    g.append("g")
+        .selectAll("text")
+        .data(data.features)
+        .enter()
+        .append("text")
+        .attr("transform", d => `translate(${path.centroid(d)})`)
+        .attr("text-anchor", "middle")
+        .attr("font-size", 10)
+        //.attr("dx", d => _.get(d, "offset[0]", null))
+        //.attr("dy", d => _.get(d, "offset[1]", null))
+        .text(d => d.properties.Region);
+    */
+
+    /*
+    svg.call(d3.zoom()
+        .extent([[0, 0], [width, height]])
+        .scaleExtent([4, 16])
+        .on("zoom", zoomed));
+
+    function zoomed() {
+        console.log("zooming");
+      g.attr("transform", d3.event.transform);
+    }
+     */
+     /*
+    var zoomHandler = d3.zoom()
+    .on("zoom", zoomActions);
+
+    zoomHandler(svg);
+
+    svg.on("dblclick.zoom", null)
+
+    var g = svg.append("g"); //Creates group for zoom
+
+     function zoomActions(){
+     g.attr("transform", d3.event.transform)
+     }
+      */
+
+
+
+});
+
+function zoomed(){
+
+  g.attr("transform", d3.event.transform);
+  /*
+  var trans="translate(" + [t.x, t.y] + ")scale(" + t.k + ")";
+
+  params.transform.w+=t.x;
+  params.transform.h+=t.y;
+  params.scale+=t.k;
+
+
+  console.log(trans);
+  console.log(params);
+   */
+}
+// mouse event handlers
+function mouseOverHandler(d, i) {
+    d3.select(this).attr("fill", HOVER_COLOR)
+    .transition()
+    .duration('400')
+    .attr('opacity', '.75');;
+
+    hoverLabel.transition()
+        .duration(50)
+        .style("opacity", 0.9)
+        .style("visibility", "visible")
+
+
+    //var str="Region : "+d.properties.Region+"\n  Confirmed Cases: "+d.properties.Cases;
+    //console.log(str);
+    //console.log(d);
+    //hoverLabel.text("Hi  "+i);
+    //hoverLabel.text(str);
+
+    // Update Hover Label data
+    var region=d.properties.adm1_name,
+        state=d.properties.adm2_name,
+        cases=cmap[region];
+    //console.log(region,state,cases);
+
+    var cats="<div style=' width: 100px; display: inline-block;'> Confirmed : <br/>Recovered : <br/> Deaths :</div>";
+
+    var vals="<div style=' display: inline-block; text-align: right'> <b>"+cases+"</b><br/> <b> - </b> <br/> <b> - </b></div>";
+
+    var parastatal="<p class='inkhundla'>"+state+"</p>";
+
+    var str='<h1><b>'+region+'</b></h1>';
+
+    hoverLabel.html(str+"<b>"+cats+vals+"</b>"+parastatal);
+
+    //hoverLabel.html(str);
+}
+function mouseOutHandler(d, i) {
+    d3.select(this)
+        .attr("fill", (d, i) => color(cmap[d.properties.adm1_name]))
+        .transition()
+        .duration('400')
+        .attr('opacity', '1');;
+
+    hoverLabel.transition()
+        .duration('50')
+        .style("opacity", 0)
+        .style("visibility", "hidden");
+
+}
+
+function movingMouse(d, i) {
+
+    //var str="Region : "+d.properties.Region+",\n  Confirmed Cases: "+d.properties.Cases;
+
+    //console.log(d);
+
+    // Update Hover Label data
+    var region=d.properties.adm1_name,
+        state=d.properties.adm2_name,
+        cases=cmap[region];
+
+        var cats="<div style=' width: 100px; display: inline-block;'> Confirmed : <br/>Recovered : <br/> Deaths :</div>";
+
+        var vals="<div style=' display: inline-block; text-align: right'> <b>"+cases+"</b><br/> <b> - </b> <br/> <b> - </b></div>";
+
+        var parastatal="<p class='inkhundla'>"+state+"</p>";
+
+        var str='<h1><b>'+region+'</b></h1>';
+
+        hoverLabel.html(str+"<b>"+cats+vals+"</b>"+parastatal);
+
+    //hoverLabel.text(str);
+    hoverLabel.style("top", (event.pageY-10)+"px").style("left",(event.pageX+10)+"px");
+}
+
+
+
+function clickHandler(d, i) {
+  //d3.select(i).text(`You've selected ${d} Region`)
+  console.log(d);
+
+}
+
+// sketchy function
+function calculateScaleCenter(features) {
+  // Get the bounding box of the paths (in pixels!) and calculate a
+  // scale factor based on the size of the bounding box and the map
+  // size.
+  var bbox_path = path.bounds(features),
+      scale = 0.95 / Math.max(
+        (bbox_path[1][0] - bbox_path[0][0]) / width,
+        (bbox_path[1][1] - bbox_path[0][1]) / height
+      );
+
+  // Get the bounding box of the features (in map units!) and use it
+  // to calculate the center of the features.
+  var bbox_feature = d3.geoBounds(features),
+      center = [
+        (bbox_feature[1][0] + bbox_feature[0][0]) / 2,
+        (bbox_feature[1][1] + bbox_feature[0][1]) / 2];
+
+  return {
+    'scale': scale,
+    'center': center
+  };
+}
+
+function clickToZoom(zoomStep) {
+  svg
+    .transition()
+    .duration(ZOOM_DURATION)
+    .call(zoom.scaleBy, zoomStep);
+}
+
+
+
+
+/*
+
+ Ignore
+
+
+ */
+
+
+
+</script>
+
+</body>
+
+</html>
